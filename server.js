@@ -51,11 +51,19 @@ app.post('/api/leads', async (req, res) => {
                 html: formatLeadEmailHTML(leadData)
             };
             
-            const info = await transporter.sendMail(mailOptions);
+            // Add timeout to email sending
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000);
+            });
+            
+            const info = await Promise.race([sendPromise, timeoutPromise]);
             console.log('✅ Email sent successfully:', info.messageId);
         } catch (error) {
             console.error('❌ Error sending email:', error.message);
+            console.error('❌ Full error:', error);
             // Don't fail the request if email fails, just log it
+            // In production, you might want to queue these for retry
         }
     } else {
         console.log('⚠️  Email not sent - Please configure SMTP_USER, SMTP_PASS, and AGENT_EMAIL environment variables');
@@ -103,19 +111,55 @@ const branchMap = {
     'altro': 'Altro / Consulenza Generale'
 };
 
-// Configure email transporter
-const transporter = nodemailer.createTransport(emailConfig);
+// Configure email transporter with timeout and connection options
+const transporter = nodemailer.createTransport({
+    ...emailConfig,
+    connectionTimeout: 10000, // 10 seconds to establish connection
+    greetingTimeout: 5000,    // 5 seconds for server greeting
+    socketTimeout: 10000,     // 10 seconds for socket operations
+    // Retry configuration
+    pool: true,
+    maxConnections: 1,
+    maxMessages: 3,
+    // Additional connection options for production environments
+    dnsTimeout: 10000        // 10 seconds for DNS lookup
+});
 
-// Verify email configuration (only in development)
+// Verify email configuration with timeout handling
 if (emailConfig.auth.user && emailConfig.auth.pass) {
-    transporter.verify(function(error, success) {
-        if (error) {
-            console.log('⚠️  Email configuration error:', error.message);
-            console.log('⚠️  Emails will not be sent. Please configure SMTP settings.');
-        } else {
-            console.log('✅ Email server is ready to send messages');
-        }
+    // Use a promise with timeout to prevent hanging
+    const verifyPromise = new Promise((resolve) => {
+        transporter.verify(function(error, success) {
+            if (error) {
+                resolve({ error });
+            } else {
+                resolve({ success });
+            }
+        });
     });
+    
+    // Add a timeout to prevent hanging forever
+    const timeoutPromise = new Promise((resolve) => {
+        setTimeout(() => {
+            resolve({ timeout: true });
+        }, 8000); // 8 second timeout for verification
+    });
+    
+    Promise.race([verifyPromise, timeoutPromise])
+        .then((result) => {
+            if (result.timeout) {
+                console.log('⚠️  Email verification timed out (connection may be blocked by firewall)');
+                console.log('⚠️  Emails will attempt to send, but may fail. Check network/firewall settings.');
+            } else if (result.error) {
+                console.log('⚠️  Email configuration error:', result.error.message);
+                console.log('⚠️  Emails will not be sent. Please configure SMTP settings.');
+            } else {
+                console.log('✅ Email server is ready to send messages');
+            }
+        })
+        .catch((err) => {
+            console.log('⚠️  Email verification error:', err.message);
+        });
 }
 
 // Helper function to format lead information for email (plain text version)
