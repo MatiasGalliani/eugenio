@@ -549,26 +549,8 @@
         // Configuration
         const COMPANY_NAME = 'Creditplan';
         
-        // API_URL with mixed-content hardening
-        const API_URL = (() => {
-            const { protocol, hostname, port } = window.location;
-            
-            // If hostname is localhost/127.0.0.1 → use same protocol (convert file:→http:) and port 3000
-            if (hostname === 'localhost' || hostname === '127.0.0.1') {
-                const proto = protocol === 'file:' ? 'http:' : protocol;
-                // Ensure no http on HTTPS pages - if current page is HTTPS, use HTTPS
-                const finalProto = window.location.protocol === 'https:' ? 'https:' : proto;
-                return `${finalProto}//${hostname}:3000/api/leads`;
-            }
-            
-            // If served over http(s) (prod) → use same origin
-            if (protocol.startsWith('http')) {
-                return `${window.location.origin.replace(/\/$/, '')}/api/leads`;
-            }
-            
-            // Final fallback: HTTPS to localhost:3000 (not plain http)
-            return 'https://localhost:3000/api/leads';
-        })();
+        // Backend API URL
+        const API_URL = 'https://eugenio-production.up.railway.app/api/leads';
 
         // State persistence
         const STORAGE_KEY = 'eugenio_conversation_state';

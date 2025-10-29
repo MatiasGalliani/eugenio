@@ -86,7 +86,7 @@
   const COMPANY_NAME = 'Creditplan';
 
   // IMPORTANT: backend is external → set explicit HTTPS URL
-  const API_URL = 'YOUR_BACKEND_API_URL';
+  const API_URL = 'https://eugenio-production.up.railway.app/api/leads';
 
   const STORAGE_KEY = 'eugenio_conversation_state';
   function saveState(){ try{ sessionStorage.setItem(STORAGE_KEY, JSON.stringify(conversationState)); }catch(e){} }
