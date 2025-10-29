@@ -549,8 +549,18 @@
         // Configuration
         const COMPANY_NAME = 'Creditplan';
         
-        // Backend API URL
-        const API_URL = 'https://eugenio-production.up.railway.app/api/leads';
+        // Backend API URL - use production URL or localhost based on environment
+        const API_URL = (() => {
+            const { protocol, hostname } = window.location;
+            
+            // If running on localhost, use local backend
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                return 'http://localhost:3000/api/leads';
+            }
+            
+            // Otherwise use production URL
+            return 'https://eugenio-production.up.railway.app/api/leads';
+        })();
 
         // State persistence
         const STORAGE_KEY = 'eugenio_conversation_state';
