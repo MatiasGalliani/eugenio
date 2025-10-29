@@ -4,6 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -41,71 +42,123 @@ app.post('/api/leads', async (req, res) => {
     // Configure the recipient email address (where agents will receive leads)
     const agentEmail = process.env.AGENT_EMAIL || 'agent@example.com'; // Change this to your agent email
     
-    if (emailConfig.auth.user && emailConfig.auth.pass && agentEmail !== 'agent@example.com') {
-        const mailOptions = {
-            from: `"Assistente Virtuale €ugenio" <${emailConfig.auth.user}>`,
-            to: agentEmail, // Can be a comma-separated list for multiple agents
-            subject: `🔔 Nuovo Lead - ${leadData.data.nome || 'Cliente'} ${leadData.data.cognome || ''} - ${branchMap[leadData.branch] || 'Richiesta'}`,
-            text: formatLeadEmail(leadData),
-            html: formatLeadEmailHTML(leadData)
-        };
+    if (agentEmail !== 'agent@example.com') {
+        const subject = `🔔 Nuovo Lead - ${leadData.data.nome || 'Cliente'} ${leadData.data.cognome || ''} - ${branchMap[leadData.branch] || 'Richiesta'}`;
+        const textContent = formatLeadEmail(leadData);
+        const htmlContent = formatLeadEmailHTML(leadData);
         
-        // Try sending with primary transporter first
         let emailSent = false;
         let lastError = null;
         
-        // Helper function to try sending email with a transporter
-        async function trySendEmail(transporterToUse, configName = 'primary') {
-            const sendPromise = transporterToUse.sendMail(mailOptions);
+        // Function to send email via SendGrid API (HTTPS - not blocked by firewalls)
+        async function sendViaSendGrid() {
+            if (!sendgridApiKey || !sendgridFromEmail) {
+                throw new Error('SendGrid not configured');
+            }
+            
+            const msg = {
+                to: agentEmail,
+                from: sendgridFromEmail,
+                subject: subject,
+                text: textContent,
+                html: htmlContent
+            };
+            
+            const sendPromise = sgMail.send(msg);
             const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error(`Email send timeout after 15 seconds (${configName})`)), 15000);
+                setTimeout(() => reject(new Error('SendGrid API timeout after 15 seconds')), 15000);
             });
             
             return await Promise.race([sendPromise, timeoutPromise]);
         }
         
-        try {
-            const info = await trySendEmail(transporter, 'primary');
-            console.log('✅ Email sent successfully via primary config:', info.messageId);
-            emailSent = true;
-        } catch (primaryError) {
-            lastError = primaryError;
-            console.warn(`⚠️  Primary SMTP config failed (${primaryError.message}), trying alternatives...`);
+        // Function to send email via SMTP (fallback)
+        async function sendViaSMTP() {
+            const mailOptions = {
+                from: `"Assistente Virtuale €ugenio" <${emailConfig.auth.user || sendgridFromEmail}>`,
+                to: agentEmail,
+                subject: subject,
+                text: textContent,
+                html: htmlContent
+            };
             
-            // Try alternative configurations
-            for (let i = 0; i < alternativeTransporters.length && !emailSent; i++) {
-                const alt = alternativeTransporters[i];
-                try {
-                    console.log(`🔄 Trying alternative SMTP config: port ${alt.config.port}, secure: ${alt.config.secure}`);
-                    const info = await trySendEmail(alt.transporter, `alternative-${i + 1}`);
-                    console.log(`✅ Email sent successfully via alternative config (port ${alt.config.port}):`, info.messageId);
-                    emailSent = true;
-                } catch (altError) {
-                    console.warn(`⚠️  Alternative config ${i + 1} failed: ${altError.message}`);
-                    lastError = altError;
-                }
+            async function trySendEmail(transporterToUse, configName = 'primary') {
+                const sendPromise = transporterToUse.sendMail(mailOptions);
+                const timeoutPromise = new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error(`Email send timeout after 15 seconds (${configName})`)), 15000);
+                });
+                
+                return await Promise.race([sendPromise, timeoutPromise]);
             }
             
-            // If all attempts failed
-            if (!emailSent) {
-                console.error('❌ All SMTP configurations failed');
-                console.error('❌ Last error:', lastError?.message || 'Unknown error');
-                console.error('❌ Error details:', {
-                    code: lastError?.code,
-                    command: lastError?.command,
-                    host: emailConfig.host,
-                    port: emailConfig.port,
-                    triedPorts: [emailConfig.port, ...alternativeConfigs.map(c => c.port)].join(', ')
-                });
-                console.error('💡 Possible solutions:');
-                console.error('   1. Check if outbound SMTP ports (587, 465) are allowed in your production environment');
-                console.error('   2. Verify firewall rules allow connections to', emailConfig.host);
-                console.error('   3. Consider using an API-based email service (SendGrid, Mailgun, AWS SES)');
-                console.error('   4. Check if your container/hosting provider blocks outbound SMTP connections');
+            // Try primary SMTP config
+            try {
+                const info = await trySendEmail(transporter, 'primary');
+                console.log('✅ Email sent successfully via SMTP:', info.messageId);
+                return info;
+            } catch (primaryError) {
+                lastError = primaryError;
+                
+                // Try alternative SMTP configurations
+                for (let i = 0; i < alternativeTransporters.length; i++) {
+                    const alt = alternativeTransporters[i];
+                    try {
+                        console.log(`🔄 Trying alternative SMTP config: port ${alt.config.port}, secure: ${alt.config.secure}`);
+                        const info = await trySendEmail(alt.transporter, `alternative-${i + 1}`);
+                        console.log(`✅ Email sent successfully via alternative SMTP config (port ${alt.config.port}):`, info.messageId);
+                        return info;
+                    } catch (altError) {
+                        console.warn(`⚠️  Alternative SMTP config ${i + 1} failed: ${altError.message}`);
+                        lastError = altError;
+                    }
+                }
+                
+                throw lastError;
             }
         }
+        
+        // Try SendGrid first (API-based, uses HTTPS)
+        if (sendgridApiKey && sendgridFromEmail) {
+            try {
+                await sendViaSendGrid();
+                console.log('✅ Email sent successfully via SendGrid API');
+                emailSent = true;
+            } catch (sendgridError) {
+                console.warn(`⚠️  SendGrid failed (${sendgridError.message}), falling back to SMTP...`);
+                lastError = sendgridError;
+            }
+        }
+        
+        // Fallback to SMTP if SendGrid failed or not configured
+        if (!emailSent && emailConfig.auth.user && emailConfig.auth.pass) {
+            try {
+                await sendViaSMTP();
+                emailSent = true;
+            } catch (smtpError) {
+                lastError = smtpError;
+                console.error('❌ All email methods failed');
+                console.error('❌ Last error:', lastError?.message || 'Unknown error');
+                
+                if (lastError?.code === 'ETIMEDOUT' || lastError?.code === 'ECONNREFUSED') {
+                    console.error('❌ Error details:', {
+                        code: lastError?.code,
+                        command: lastError?.command,
+                        host: emailConfig.host,
+                        port: emailConfig.port,
+                        triedPorts: [emailConfig.port, ...alternativeConfigs.map(c => c.port)].join(', ')
+                    });
+                    console.error('💡 SMTP ports are blocked. Configure SENDGRID_API_KEY and SENDGRID_FROM_EMAIL to use API-based email.');
+                }
+            }
+        }
+        
+        if (!emailSent) {
+            console.error('⚠️  Email not sent - Please configure either:');
+            console.error('   1. SendGrid: SENDGRID_API_KEY and SENDGRID_FROM_EMAIL (recommended for production)');
+            console.error('   2. SMTP: SMTP_USER, SMTP_PASS, and AGENT_EMAIL (may be blocked by firewalls)');
+        }
     } else {
-        console.log('⚠️  Email not sent - Please configure SMTP_USER, SMTP_PASS, and AGENT_EMAIL environment variables');
+        console.log('⚠️  Email not sent - Please configure AGENT_EMAIL environment variable');
     }
     
     // TODO: Add your business logic here:
@@ -123,6 +176,18 @@ app.post('/api/leads', async (req, res) => {
 
 // Static files - Serve AFTER API routes
 app.use(express.static(path.join(__dirname, '.')));
+
+// SendGrid configuration (API-based, uses HTTPS - not blocked by firewalls)
+const sendgridApiKey = process.env.SENDGRID_API_KEY || '';
+const sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.SMTP_USER || '';
+
+// Initialize SendGrid if API key is provided
+if (sendgridApiKey) {
+    sgMail.setApiKey(sendgridApiKey);
+    console.log('📧 SendGrid API configured');
+} else {
+    console.log('📧 SendGrid API not configured (set SENDGRID_API_KEY to use)');
+}
 
 // Email configuration
 // You can set these via environment variables or replace with your SMTP settings
@@ -479,6 +544,14 @@ app.get('/', (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📧 Email config: ${emailConfig.auth.user ? 'Configured' : 'Not configured - set SMTP_USER and SMTP_PASS'}`);
+    if (sendgridApiKey && sendgridFromEmail) {
+        console.log(`📧 SendGrid: Configured (recommended for production)`);
+    }
+    if (emailConfig.auth.user && emailConfig.auth.pass) {
+        console.log(`📧 SMTP: Configured (fallback)`);
+    }
+    if (!sendgridApiKey && !emailConfig.auth.user) {
+        console.log(`📧 Email: Not configured - Set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL (recommended) or SMTP_USER and SMTP_PASS`);
+    }
 });
 
