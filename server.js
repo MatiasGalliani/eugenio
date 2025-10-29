@@ -42,28 +42,67 @@ app.post('/api/leads', async (req, res) => {
     const agentEmail = process.env.AGENT_EMAIL || 'agent@example.com'; // Change this to your agent email
     
     if (emailConfig.auth.user && emailConfig.auth.pass && agentEmail !== 'agent@example.com') {
-        try {
-            const mailOptions = {
-                from: `"Assistente Virtuale €ugenio" <${emailConfig.auth.user}>`,
-                to: agentEmail, // Can be a comma-separated list for multiple agents
-                subject: `🔔 Nuovo Lead - ${leadData.data.nome || 'Cliente'} ${leadData.data.cognome || ''} - ${branchMap[leadData.branch] || 'Richiesta'}`,
-                text: formatLeadEmail(leadData),
-                html: formatLeadEmailHTML(leadData)
-            };
-            
-            // Add timeout to email sending
-            const sendPromise = transporter.sendMail(mailOptions);
+        const mailOptions = {
+            from: `"Assistente Virtuale €ugenio" <${emailConfig.auth.user}>`,
+            to: agentEmail, // Can be a comma-separated list for multiple agents
+            subject: `🔔 Nuovo Lead - ${leadData.data.nome || 'Cliente'} ${leadData.data.cognome || ''} - ${branchMap[leadData.branch] || 'Richiesta'}`,
+            text: formatLeadEmail(leadData),
+            html: formatLeadEmailHTML(leadData)
+        };
+        
+        // Try sending with primary transporter first
+        let emailSent = false;
+        let lastError = null;
+        
+        // Helper function to try sending email with a transporter
+        async function trySendEmail(transporterToUse, configName = 'primary') {
+            const sendPromise = transporterToUse.sendMail(mailOptions);
             const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000);
+                setTimeout(() => reject(new Error(`Email send timeout after 15 seconds (${configName})`)), 15000);
             });
             
-            const info = await Promise.race([sendPromise, timeoutPromise]);
-            console.log('✅ Email sent successfully:', info.messageId);
-        } catch (error) {
-            console.error('❌ Error sending email:', error.message);
-            console.error('❌ Full error:', error);
-            // Don't fail the request if email fails, just log it
-            // In production, you might want to queue these for retry
+            return await Promise.race([sendPromise, timeoutPromise]);
+        }
+        
+        try {
+            const info = await trySendEmail(transporter, 'primary');
+            console.log('✅ Email sent successfully via primary config:', info.messageId);
+            emailSent = true;
+        } catch (primaryError) {
+            lastError = primaryError;
+            console.warn(`⚠️  Primary SMTP config failed (${primaryError.message}), trying alternatives...`);
+            
+            // Try alternative configurations
+            for (let i = 0; i < alternativeTransporters.length && !emailSent; i++) {
+                const alt = alternativeTransporters[i];
+                try {
+                    console.log(`🔄 Trying alternative SMTP config: port ${alt.config.port}, secure: ${alt.config.secure}`);
+                    const info = await trySendEmail(alt.transporter, `alternative-${i + 1}`);
+                    console.log(`✅ Email sent successfully via alternative config (port ${alt.config.port}):`, info.messageId);
+                    emailSent = true;
+                } catch (altError) {
+                    console.warn(`⚠️  Alternative config ${i + 1} failed: ${altError.message}`);
+                    lastError = altError;
+                }
+            }
+            
+            // If all attempts failed
+            if (!emailSent) {
+                console.error('❌ All SMTP configurations failed');
+                console.error('❌ Last error:', lastError?.message || 'Unknown error');
+                console.error('❌ Error details:', {
+                    code: lastError?.code,
+                    command: lastError?.command,
+                    host: emailConfig.host,
+                    port: emailConfig.port,
+                    triedPorts: [emailConfig.port, ...alternativeConfigs.map(c => c.port)].join(', ')
+                });
+                console.error('💡 Possible solutions:');
+                console.error('   1. Check if outbound SMTP ports (587, 465) are allowed in your production environment');
+                console.error('   2. Verify firewall rules allow connections to', emailConfig.host);
+                console.error('   3. Consider using an API-based email service (SendGrid, Mailgun, AWS SES)');
+                console.error('   4. Check if your container/hosting provider blocks outbound SMTP connections');
+            }
         }
     } else {
         console.log('⚠️  Email not sent - Please configure SMTP_USER, SMTP_PASS, and AGENT_EMAIL environment variables');
@@ -111,19 +150,57 @@ const branchMap = {
     'altro': 'Altro / Consulenza Generale'
 };
 
-// Configure email transporter with timeout and connection options
-const transporter = nodemailer.createTransport({
-    ...emailConfig,
-    connectionTimeout: 10000, // 10 seconds to establish connection
-    greetingTimeout: 5000,    // 5 seconds for server greeting
-    socketTimeout: 10000,     // 10 seconds for socket operations
-    // Retry configuration
-    pool: true,
-    maxConnections: 1,
-    maxMessages: 3,
-    // Additional connection options for production environments
-    dnsTimeout: 10000        // 10 seconds for DNS lookup
-});
+// Helper function to create transporter with timeout options
+function createTransporter(config) {
+    return nodemailer.createTransport({
+        ...config,
+        connectionTimeout: 10000, // 10 seconds to establish connection
+        greetingTimeout: 5000,    // 5 seconds for server greeting
+        socketTimeout: 10000,     // 10 seconds for socket operations
+        // Additional connection options for production environments
+        dnsTimeout: 10000        // 10 seconds for DNS lookup
+    });
+}
+
+// Configure primary email transporter
+let transporter = createTransporter(emailConfig);
+
+// Alternative SMTP configurations to try if primary fails
+// Some production environments block port 587 but allow 465, or vice versa
+const alternativeConfigs = [];
+if (emailConfig.host && emailConfig.auth.user && emailConfig.auth.pass) {
+    const baseHost = emailConfig.host;
+    const baseAuth = emailConfig.auth;
+    
+    // Try port 465 (SSL) if currently using 587 (TLS)
+    if (emailConfig.port === 587 && !emailConfig.secure) {
+        alternativeConfigs.push({
+            host: baseHost,
+            port: 465,
+            secure: true, // Port 465 requires secure: true
+            auth: baseAuth,
+            tls: emailConfig.tls
+        });
+    }
+    
+    // Try port 587 (TLS) if currently using 465 (SSL)
+    if (emailConfig.port === 465 && emailConfig.secure) {
+        alternativeConfigs.push({
+            host: baseHost,
+            port: 587,
+            secure: false,
+            requireTLS: true,
+            auth: baseAuth,
+            tls: emailConfig.tls
+        });
+    }
+}
+
+// Store alternative transporters
+const alternativeTransporters = alternativeConfigs.map(config => ({
+    config,
+    transporter: createTransporter(config)
+}));
 
 // Verify email configuration with timeout handling
 if (emailConfig.auth.user && emailConfig.auth.pass) {
@@ -149,10 +226,17 @@ if (emailConfig.auth.user && emailConfig.auth.pass) {
         .then((result) => {
             if (result.timeout) {
                 console.log('⚠️  Email verification timed out (connection may be blocked by firewall)');
-                console.log('⚠️  Emails will attempt to send, but may fail. Check network/firewall settings.');
+                console.log(`⚠️  Attempted connection to ${emailConfig.host}:${emailConfig.port}`);
+                console.log('⚠️  Emails will attempt to send with fallback configurations, but may fail.');
+                console.log('💡 If emails fail, try setting SMTP_PORT=465 and SMTP_SECURE=true');
             } else if (result.error) {
                 console.log('⚠️  Email configuration error:', result.error.message);
-                console.log('⚠️  Emails will not be sent. Please configure SMTP settings.');
+                console.log(`⚠️  SMTP host: ${emailConfig.host}, port: ${emailConfig.port}`);
+                if (result.error.code === 'ETIMEDOUT' || result.error.code === 'ECONNREFUSED') {
+                    console.log('💡 This appears to be a network/firewall issue. Consider:');
+                    console.log('   1. Switching to port 465 (SSL) if using 587, or vice versa');
+                    console.log('   2. Using an API-based email service instead of SMTP');
+                }
             } else {
                 console.log('✅ Email server is ready to send messages');
             }
