@@ -85,8 +85,14 @@
   const SUBMIT_THROTTLE_MS = 2000;
   const COMPANY_NAME = 'Creditplan';
 
-  // IMPORTANT: backend is external → set explicit HTTPS URL
-  const API_URL = 'https://eugenio-production.up.railway.app/api/leads';
+  // Backend API URL - use production URL or localhost based on environment
+  const API_URL = (() => {
+    const { hostname } = window.location;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3000/api/leads';
+    }
+    return 'https://eugenio-production.up.railway.app/api/leads';
+  })();
 
   const STORAGE_KEY = 'eugenio_conversation_state';
   function saveState(){ try{ sessionStorage.setItem(STORAGE_KEY, JSON.stringify(conversationState)); }catch(e){} }
