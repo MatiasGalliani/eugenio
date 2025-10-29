@@ -81,11 +81,15 @@ app.use(express.static(path.join(__dirname, '.')));
 // You can set these via environment variables or replace with your SMTP settings
 const emailConfig = {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT || 587,
-    secure: false, // true for 465, false for other ports
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
     auth: {
-        user: process.env.SMTP_USER || '', // Your email
-        pass: process.env.SMTP_PASS || ''  // Your email password or app password
+        user: process.env.SMTP_USER || '',
+        pass: process.env.SMTP_PASS || ''
+    },
+    requireTLS: String(process.env.SMTP_REQUIRE_TLS || '').toLowerCase() === 'true',
+    tls: {
+        rejectUnauthorized: String(process.env.SMTP_REJECT_UNAUTHORIZED || 'true').toLowerCase() === 'true'
     }
 };
 
