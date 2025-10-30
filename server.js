@@ -42,13 +42,18 @@ app.post('/api/leads', async (req, res) => {
 
     // Forward to Make.com webhook if configured (non-blocking)
     const makeWebhookUrl = process.env.MAKE_WEBHOOK_URL || '';
+    const makeApiKey = process.env.MAKE_API_KEY || '';
     if (makeWebhookUrl) {
         try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 10000);
+            const headers = { 'Content-Type': 'application/json' };
+            if (makeApiKey) {
+                headers['x-make-apikey'] = makeApiKey;
+            }
             fetch(makeWebhookUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify(leadData),
                 signal: controller.signal
             })
