@@ -11,7 +11,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Enable CORS - allow all origins (including creditplan.it and localhost)
-app.use(cors({
+const corsOptions = {
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps, Postman, etc.) or from any origin
         if (!origin || origin === 'null') {
@@ -21,11 +21,17 @@ app.use(cors({
         callback(null, true);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'X-Requested-With', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'X-Requested-With', 'Accept', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'],
     credentials: false,
     preflightContinue: false,
-    optionsSuccessStatus: 204
-}));
+    optionsSuccessStatus: 204,
+    maxAge: 86400 // 24 hours
+};
+
+app.use(cors(corsOptions));
+
+// Explicitly handle OPTIONS requests for CORS preflight
+app.options('*', cors(corsOptions));
 
 // Middleware for JSON parsing
 app.use(express.json());

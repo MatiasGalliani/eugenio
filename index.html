@@ -531,26 +531,44 @@
     </div>
 
     <script>
-        // Get elements with null checks
-        const chatToggle = document.getElementById('chatToggle');
-        const chatWindow = document.getElementById('chatWindow');
-        const closeChat = document.getElementById('closeChat');
-        const chatMessages = document.getElementById('chatMessages');
-        const notificationBadge = document.getElementById('notificationBadge');
-        
-        // Exit early if required elements don't exist
-        if (!chatToggle || !chatWindow || !closeChat || !chatMessages) {
-            console.error('€ugenio: Required DOM elements not found. Make sure the chat widget HTML is present.');
-        }
-
-        let isOpen = false;
-        let conversationState = {
-            branch: null,
-            subOption: null,
-            data: {}
-        };
-        let lastSubmitTime = 0;
-        const SUBMIT_THROTTLE_MS = 2000;
+        // Wait for DOM to be ready before initializing
+        (function() {
+            // State variables - accessible to all functions
+            let isOpen = false;
+            let conversationState = {
+                branch: null,
+                subOption: null,
+                data: {}
+            };
+            let lastSubmitTime = 0;
+            const SUBMIT_THROTTLE_MS = 2000;
+            let isSubmitting = false;
+            let hasShownSuccess = false;
+            let focusTrapElements = [];
+            let previouslyFocusedElement = null;
+            
+            function init() {
+                // Get elements with null checks
+                const chatToggle = document.getElementById('chatToggle');
+                const chatWindow = document.getElementById('chatWindow');
+                const closeChat = document.getElementById('closeChat');
+                const chatMessages = document.getElementById('chatMessages');
+                const notificationBadge = document.getElementById('notificationBadge');
+                
+                // Exit early if required elements don't exist
+                if (!chatToggle || !chatWindow || !closeChat || !chatMessages) {
+                    console.error('€ugenio: Required DOM elements not found. Make sure the chat widget HTML is present.');
+                    return; // Exit early if elements don't exist
+                }
+                
+                // Store elements globally for use in other functions
+                window.eugenioElements = {
+                    chatToggle,
+                    chatWindow,
+                    closeChat,
+                    chatMessages,
+                    notificationBadge
+                };
 
         // Configuration
         const COMPANY_NAME = 'Creditplan';
@@ -595,11 +613,10 @@
             };
         }
 
-        // Focus trap
-        let focusTrapElements = [];
-        let previouslyFocusedElement = null;
+        // Focus trap - variables already defined in outer scope
 
         function trapFocus(event) {
+            const chatWindow = window.eugenioElements?.chatWindow;
             if (!chatWindow || !isOpen || chatWindow.classList.contains('active') === false) return;
             
             const focusableSelectors = [
@@ -631,6 +648,7 @@
         }
 
         function openFocusTrap() {
+            const chatWindow = window.eugenioElements?.chatWindow;
             if (!chatWindow) return;
             previouslyFocusedElement = document.activeElement;
             document.addEventListener('keydown', trapFocus);
@@ -656,6 +674,10 @@
         }
 
         function toggleChat() {
+            const chatToggle = window.eugenioElements?.chatToggle;
+            const chatWindow = window.eugenioElements?.chatWindow;
+            const chatMessages = window.eugenioElements?.chatMessages;
+            const notificationBadge = window.eugenioElements?.notificationBadge;
             if (!chatToggle || !chatWindow) return;
             
             isOpen = !isOpen;
@@ -683,14 +705,12 @@
             }
         }
 
-        // Escape key handler
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && isOpen) {
-                toggleChat();
-            }
-        });
+        // Escape key handler - will be set up in init()
 
         function addMessage(text, isUser = false, showOptions = false, options = []) {
+            const chatMessages = window.eugenioElements?.chatMessages;
+            if (!chatMessages) return;
+            
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
             
@@ -715,10 +735,8 @@
                 bubble.appendChild(optionsContainer);
             }
             
-            if (chatMessages) {
-                chatMessages.appendChild(messageDiv);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         function restoreConversation() {
@@ -992,6 +1010,9 @@
         }
 
         function showTextInput(fieldName, placeholder, callback, inputMode = 'text') {
+            const chatMessages = window.eugenioElements?.chatMessages;
+            if (!chatMessages) return;
+            
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message bot';
             
@@ -1054,16 +1075,17 @@
             bubble.appendChild(textForm);
             messageDiv.appendChild(bubble);
             
-            if (chatMessages) {
-                chatMessages.appendChild(messageDiv);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
             
             // Focus on text input
             setTimeout(() => textInput.focus(), 100);
         }
 
         function showEmailInput() {
+            const chatMessages = window.eugenioElements?.chatMessages;
+            if (!chatMessages) return;
+            
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message bot';
             
@@ -1101,10 +1123,8 @@
             bubble.appendChild(emailForm);
             messageDiv.appendChild(bubble);
             
-            if (chatMessages) {
-                chatMessages.appendChild(messageDiv);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
             
             // Focus on email input
             setTimeout(() => emailInput.focus(), 100);
@@ -1177,6 +1197,9 @@
         }
 
         function showMessageInput() {
+            const chatMessages = window.eugenioElements?.chatMessages;
+            if (!chatMessages) return;
+            
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message bot';
             
@@ -1209,10 +1232,8 @@
             bubble.appendChild(messageForm);
             messageDiv.appendChild(bubble);
             
-            if (chatMessages) {
-                chatMessages.appendChild(messageDiv);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
             
             // Focus on message input
             setTimeout(() => messageInput.focus(), 100);
@@ -1249,6 +1270,9 @@
         }
 
         function showConsentForm() {
+            const chatMessages = window.eugenioElements?.chatMessages;
+            if (!chatMessages) return;
+            
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message bot';
             
@@ -1304,16 +1328,16 @@
             bubble.appendChild(consentForm);
             messageDiv.appendChild(bubble);
             
-            if (chatMessages) {
-                chatMessages.appendChild(messageDiv);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        let isSubmitting = false;
-        let hasShownSuccess = false;
+        // State variables - already defined in outer scope
 
         function submitLead(form = null, submitBtn = null) {
+            const chatMessages = window.eugenioElements?.chatMessages;
+            if (!chatMessages) return;
+            
             if (isSubmitting) return;
             
             const now = Date.now();
@@ -1411,8 +1435,16 @@
                     const retryContainer = document.createElement('div');
                     retryContainer.className = 'options-container';
                     retryContainer.appendChild(retryBtn);
-                    const lastBubble = chatMessages.lastElementChild.querySelector('.message-bubble');
-                    lastBubble.appendChild(retryContainer);
+                    const chatMessages = window.eugenioElements?.chatMessages;
+                    if (chatMessages) {
+                        const lastMessage = chatMessages.lastElementChild;
+                        if (lastMessage) {
+                            const lastBubble = lastMessage.querySelector('.message-bubble');
+                            if (lastBubble) {
+                                lastBubble.appendChild(retryContainer);
+                            }
+                        }
+                    }
                 }, 300);
             })
             .finally(() => {
@@ -1423,31 +1455,41 @@
             });
         }
 
-        // Event Listeners - only if elements exist
-        if (chatToggle) {
-            chatToggle.addEventListener('click', toggleChat);
-        }
-        if (closeChat) {
-            closeChat.addEventListener('click', toggleChat);
-        }
+                // Event Listeners - only if elements exist
+                if (chatToggle) {
+                    chatToggle.addEventListener('click', toggleChat);
+                }
+                if (closeChat) {
+                    closeChat.addEventListener('click', toggleChat);
+                }
 
-        // Show notification when page loads (if chat is closed)
-        if (notificationBadge) {
-            setTimeout(() => {
-                if (!isOpen) {
-                    notificationBadge.style.display = 'flex';
+                // Show notification when page loads (if chat is closed)
+                if (notificationBadge) {
+                    setTimeout(() => {
+                        if (!isOpen) {
+                            notificationBadge.style.display = 'flex';
+                        }
+                    }, 2000);
                 }
-            }, 2000);
-        }
-        
-        // Escape key handler - only if chat window exists
-        if (chatWindow) {
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape' && isOpen) {
-                    toggleChat();
+                
+                // Escape key handler - only if chat window exists
+                if (chatWindow) {
+                    document.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape' && isOpen) {
+                            toggleChat();
+                        }
+                    });
                 }
-            });
-        }
+            }
+            
+            // Initialize when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                // DOM is already ready
+                init();
+            }
+        })();
     </script>
 </body>
 </html>
