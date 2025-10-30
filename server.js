@@ -9,6 +9,9 @@ const sgMail = require('@sendgrid/mail');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const EMAIL_ENABLED = String(process.env.EMAIL_ENABLED || 'true').toLowerCase() === 'true';
+const EMAIL_VERIFY_ON_START = String(process.env.EMAIL_VERIFY_ON_START || 'true').toLowerCase() === 'true';
 
 // Enable CORS - allow all origins (including creditplan.it and localhost)
 const corsOptions = {
@@ -49,11 +52,15 @@ app.post('/api/leads', async (req, res) => {
     // Log the lead data
     console.log('📧 New Lead Received:', JSON.stringify(leadData, null, 2));
     
+    if (!EMAIL_ENABLED) {
+        console.log('✉️  Email delivery disabled (EMAIL_ENABLED=false). Skipping send.');
+    }
+    
     // Send email notification to agents
     // Configure the recipient email address (where agents will receive leads)
     const agentEmail = process.env.AGENT_EMAIL || 'agent@example.com'; // Change this to your agent email
     
-    if (agentEmail !== 'agent@example.com') {
+    if (EMAIL_ENABLED && agentEmail !== 'agent@example.com') {
         const subject = `🔔 Nuovo Lead - ${leadData.data.nome || 'Cliente'} ${leadData.data.cognome || ''} - ${branchMap[leadData.branch] || 'Richiesta'}`;
         const textContent = formatLeadEmail(leadData);
         const htmlContent = formatLeadEmailHTML(leadData);
@@ -168,7 +175,7 @@ app.post('/api/leads', async (req, res) => {
             console.error('   1. SendGrid: SENDGRID_API_KEY and SENDGRID_FROM_EMAIL (recommended for production)');
             console.error('   2. SMTP: SMTP_USER, SMTP_PASS, and AGENT_EMAIL (may be blocked by firewalls)');
         }
-    } else {
+    } else if (EMAIL_ENABLED) {
         console.log('⚠️  Email not sent - Please configure AGENT_EMAIL environment variable');
     }
     
@@ -278,8 +285,8 @@ const alternativeTransporters = alternativeConfigs.map(config => ({
     transporter: createTransporter(config)
 }));
 
-// Verify email configuration with timeout handling
-if (emailConfig.auth.user && emailConfig.auth.pass) {
+// Verify email configuration with timeout handling (can be disabled via EMAIL_VERIFY_ON_START=false)
+if (EMAIL_VERIFY_ON_START && emailConfig.auth.user && emailConfig.auth.pass) {
     // Use a promise with timeout to prevent hanging
     const verifyPromise = new Promise((resolve) => {
         transporter.verify(function(error, success) {
@@ -320,6 +327,8 @@ if (emailConfig.auth.user && emailConfig.auth.pass) {
         .catch((err) => {
             console.log('⚠️  Email verification error:', err.message);
         });
+} else if (!EMAIL_VERIFY_ON_START) {
+    console.log('ℹ️  Skipping SMTP verification on start (EMAIL_VERIFY_ON_START=false)');
 }
 
 // Helper function to format lead information for email (plain text version)
@@ -553,8 +562,9 @@ app.get('/', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+    const hostForLog = HOST === '0.0.0.0' ? '0.0.0.0' : HOST;
+    console.log(`🚀 Server running on http://${hostForLog}:${PORT}`);
     if (sendgridApiKey && sendgridFromEmail) {
         console.log(`📧 SendGrid: Configured (recommended for production)`);
     }
@@ -565,4 +575,21 @@ app.listen(PORT, () => {
         console.log(`📧 Email: Not configured - Set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL (recommended) or SMTP_USER and SMTP_PASS`);
     }
 });
+
+// Graceful shutdown to avoid noisy SIGTERM errors
+function shutdown(signal) {
+    console.log(`\n${signal} received, shutting down gracefully...`);
+    server.close(() => {
+        console.log('HTTP server closed.');
+        process.exit(0);
+    });
+    // Force exit if not closed in time
+    setTimeout(() => {
+        console.warn('Forcing shutdown after 10s...');
+        process.exit(1);
+    }, 10000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
