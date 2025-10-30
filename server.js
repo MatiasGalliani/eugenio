@@ -13,28 +13,17 @@ const HOST = process.env.HOST || '0.0.0.0';
 const EMAIL_ENABLED = String(process.env.EMAIL_ENABLED || 'true').toLowerCase() === 'true';
 const EMAIL_VERIFY_ON_START = String(process.env.EMAIL_VERIFY_ON_START || 'true').toLowerCase() === 'true';
 
-// Enable CORS - allow all origins (including creditplan.it and localhost)
-const corsOptions = {
-    origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, Postman, etc.) or from any origin
-        if (!origin || origin === 'null') {
-            return callback(null, true);
-        }
-        // Allow all origins
-        callback(null, true);
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'X-Requested-With', 'Accept', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'],
-    credentials: false,
-    preflightContinue: false,
-    optionsSuccessStatus: 204,
-    maxAge: 86400 // 24 hours
-};
-
-app.use(cors(corsOptions));
-
-// Explicitly handle OPTIONS requests for CORS preflight
-app.options('*', cors(corsOptions));
+// Bypass CORS completely: set permissive headers for all requests and short-circuit preflight
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
 
 // Middleware for JSON parsing
 app.use(express.json());
@@ -194,6 +183,11 @@ app.post('/api/leads', async (req, res) => {
 
 // Static files - Serve AFTER API routes
 app.use(express.static(path.join(__dirname, '.')));
+
+// Prevent favicon.ico 404 noise
+app.get('/favicon.ico', (req, res) => {
+    res.status(204).end();
+});
 
 // SendGrid configuration (API-based, uses HTTPS - not blocked by firewalls)
 const sendgridApiKey = process.env.SENDGRID_API_KEY || '';
