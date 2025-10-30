@@ -10,12 +10,21 @@ const sgMail = require('@sendgrid/mail');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable CORS - allow all origins
+// Enable CORS - allow all origins (including creditplan.it and localhost)
 app.use(cors({
-    origin: '*',
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, Postman, etc.) or from any origin
+        if (!origin || origin === 'null') {
+            return callback(null, true);
+        }
+        // Allow all origins
+        callback(null, true);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'X-Requested-With', 'Accept'],
-    credentials: false
+    credentials: false,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
 }));
 
 // Middleware for JSON parsing
