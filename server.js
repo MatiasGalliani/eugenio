@@ -5,7 +5,6 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
-const sgMail = require('@sendgrid/mail');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -57,32 +56,10 @@ app.post('/api/leads', async (req, res) => {
         let emailSent = false;
         let lastError = null;
         
-        // Function to send email via SendGrid API (HTTPS - not blocked by firewalls)
-        async function sendViaSendGrid() {
-            if (!sendgridApiKey || !sendgridFromEmail) {
-                throw new Error('SendGrid not configured');
-            }
-            
-            const msg = {
-                to: agentEmail,
-                from: sendgridFromEmail,
-                subject: subject,
-                text: textContent,
-                html: htmlContent
-            };
-            
-            const sendPromise = sgMail.send(msg);
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('SendGrid API timeout after 15 seconds')), 15000);
-            });
-            
-            return await Promise.race([sendPromise, timeoutPromise]);
-        }
-        
-        // Function to send email via SMTP (fallback)
+        // Function to send email via SMTP
         async function sendViaSMTP() {
             const mailOptions = {
-                from: `"Assistente Virtuale €ugenio" <${emailConfig.auth.user || sendgridFromEmail}>`,
+                from: `"Assistente Virtuale €ugenio" <${emailConfig.auth.user}>`,
                 to: agentEmail,
                 subject: subject,
                 text: textContent,
@@ -124,20 +101,8 @@ app.post('/api/leads', async (req, res) => {
             }
         }
         
-        // Try SendGrid first (API-based, uses HTTPS)
-        if (sendgridApiKey && sendgridFromEmail) {
-            try {
-                await sendViaSendGrid();
-                console.log('✅ Email sent successfully via SendGrid API');
-                emailSent = true;
-            } catch (sendgridError) {
-                console.warn(`⚠️  SendGrid failed (${sendgridError.message}), falling back to SMTP...`);
-                lastError = sendgridError;
-            }
-        }
-        
-        // Fallback to SMTP if SendGrid failed or not configured
-        if (!emailSent && emailConfig.auth.user && emailConfig.auth.pass) {
+        // Send via SMTP if configured
+        if (emailConfig.auth.user && emailConfig.auth.pass) {
             try {
                 await sendViaSMTP();
                 emailSent = true;
@@ -154,15 +119,13 @@ app.post('/api/leads', async (req, res) => {
                         port: emailConfig.port,
                         triedPorts: [emailConfig.port, ...alternativeConfigs.map(c => c.port)].join(', ')
                     });
-                    console.error('💡 SMTP ports are blocked. Configure SENDGRID_API_KEY and SENDGRID_FROM_EMAIL to use API-based email.');
+                    console.error('💡 SMTP ports may be blocked by firewall. Try port 465 with SMTP_SECURE=true.');
                 }
             }
         }
         
         if (!emailSent) {
-            console.error('⚠️  Email not sent - Please configure either:');
-            console.error('   1. SendGrid: SENDGRID_API_KEY and SENDGRID_FROM_EMAIL (recommended for production)');
-            console.error('   2. SMTP: SMTP_USER, SMTP_PASS, and AGENT_EMAIL (may be blocked by firewalls)');
+            console.error('⚠️  Email not sent - Please configure SMTP_USER, SMTP_PASS, and AGENT_EMAIL');
         }
     } else if (EMAIL_ENABLED) {
         console.log('⚠️  Email not sent - Please configure AGENT_EMAIL environment variable');
@@ -189,17 +152,7 @@ app.get('/favicon.ico', (req, res) => {
     res.status(204).end();
 });
 
-// SendGrid configuration (API-based, uses HTTPS - not blocked by firewalls)
-const sendgridApiKey = process.env.SENDGRID_API_KEY || '';
-const sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.SMTP_USER || '';
-
-// Initialize SendGrid if API key is provided
-if (sendgridApiKey) {
-    sgMail.setApiKey(sendgridApiKey);
-    console.log('📧 SendGrid API configured');
-} else {
-    console.log('📧 SendGrid API not configured (set SENDGRID_API_KEY to use)');
-}
+// SendGrid removed: using SMTP only
 
 // Email configuration
 // You can set these via environment variables or replace with your SMTP settings
@@ -559,14 +512,11 @@ app.get('/', (req, res) => {
 const server = app.listen(PORT, HOST, () => {
     const hostForLog = HOST === '0.0.0.0' ? '0.0.0.0' : HOST;
     console.log(`🚀 Server running on http://${hostForLog}:${PORT}`);
-    if (sendgridApiKey && sendgridFromEmail) {
-        console.log(`📧 SendGrid: Configured (recommended for production)`);
-    }
     if (emailConfig.auth.user && emailConfig.auth.pass) {
-        console.log(`📧 SMTP: Configured (fallback)`);
+        console.log(`📧 SMTP: Configured`);
     }
-    if (!sendgridApiKey && !emailConfig.auth.user) {
-        console.log(`📧 Email: Not configured - Set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL (recommended) or SMTP_USER and SMTP_PASS`);
+    if (!emailConfig.auth.user) {
+        console.log(`📧 Email: Not configured - Set SMTP_USER and SMTP_PASS`);
     }
 });
 
