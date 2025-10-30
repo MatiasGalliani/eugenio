@@ -44,6 +44,38 @@ app.post('/api/leads', async (req, res) => {
     if (!EMAIL_ENABLED) {
         console.log('✉️  Email delivery disabled (EMAIL_ENABLED=false). Skipping send.');
     }
+
+    // Forward to Make.com webhook if configured (non-blocking)
+    const makeWebhookUrl = process.env.MAKE_WEBHOOK_URL || '';
+    if (makeWebhookUrl) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000);
+            fetch(makeWebhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(leadData),
+                signal: controller.signal
+            })
+            .then(async (r) => {
+                clearTimeout(timeout);
+                if (!r.ok) {
+                    const text = await r.text().catch(() => '');
+                    console.warn(`⚠️  Make webhook responded ${r.status}: ${text}`);
+                } else {
+                    console.log('✅ Lead forwarded to Make webhook');
+                }
+            })
+            .catch((err) => {
+                clearTimeout(timeout);
+                console.warn(`⚠️  Make webhook error: ${err.message}`);
+            });
+        } catch (err) {
+            console.warn(`⚠️  Make webhook setup error: ${err.message}`);
+        }
+    } else {
+        console.log('ℹ️  MAKE_WEBHOOK_URL not set; skipping webhook forward.');
+    }
     
     // Send email notification to agents
     // Configure the recipient email address (where agents will receive leads)
