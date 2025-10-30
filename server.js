@@ -5,6 +5,7 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,6 +56,27 @@ app.post('/api/leads', async (req, res) => {
         
         let emailSent = false;
         let lastError = null;
+        const resendApiKey = process.env.RESEND_API_KEY || '';
+        const resendFromEmail = process.env.RESEND_FROM_EMAIL || '';
+
+        // Function to send email via Resend API (HTTPS)
+        async function sendViaResend() {
+            if (!resendApiKey || !resendFromEmail) {
+                throw new Error('Resend not configured');
+            }
+            const resend = new Resend(resendApiKey);
+            const sendPromise = resend.emails.send({
+                from: resendFromEmail,
+                to: agentEmail,
+                subject,
+                text: textContent,
+                html: htmlContent
+            });
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Resend API timeout after 15 seconds')), 15000);
+            });
+            return await Promise.race([sendPromise, timeoutPromise]);
+        }
         
         // Function to send email via SMTP
         async function sendViaSMTP() {
@@ -101,8 +123,23 @@ app.post('/api/leads', async (req, res) => {
             }
         }
         
-        // Send via SMTP if configured
-        if (emailConfig.auth.user && emailConfig.auth.pass) {
+        // Try Resend first (API over HTTPS)
+        if (resendApiKey && resendFromEmail) {
+            try {
+                const result = await sendViaResend();
+                if (result?.error) {
+                    throw new Error(result.error.message || 'Resend error');
+                }
+                console.log('✅ Email sent successfully via Resend API');
+                emailSent = true;
+            } catch (resendError) {
+                lastError = resendError;
+                console.warn(`⚠️  Resend failed (${resendError.message}), will try SMTP if configured...`);
+            }
+        }
+
+        // Fallback to SMTP if Resend failed or not configured
+        if (!emailSent && emailConfig.auth.user && emailConfig.auth.pass) {
             try {
                 await sendViaSMTP();
                 emailSent = true;
@@ -125,7 +162,7 @@ app.post('/api/leads', async (req, res) => {
         }
         
         if (!emailSent) {
-            console.error('⚠️  Email not sent - Please configure SMTP_USER, SMTP_PASS, and AGENT_EMAIL');
+            console.error('⚠️  Email not sent - Please configure RESEND_API_KEY and RESEND_FROM_EMAIL, or SMTP_USER/SMTP_PASS and AGENT_EMAIL');
         }
     } else if (EMAIL_ENABLED) {
         console.log('⚠️  Email not sent - Please configure AGENT_EMAIL environment variable');
@@ -154,8 +191,7 @@ app.get('/favicon.ico', (req, res) => {
 
 // SendGrid removed: using SMTP only
 
-// Email configuration
-// You can set these via environment variables or replace with your SMTP settings
+// Email configuration (SMTP fallback). Prefer RESEND for production over HTTPS
 const emailConfig = {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: Number(process.env.SMTP_PORT || 587),
@@ -512,11 +548,14 @@ app.get('/', (req, res) => {
 const server = app.listen(PORT, HOST, () => {
     const hostForLog = HOST === '0.0.0.0' ? '0.0.0.0' : HOST;
     console.log(`🚀 Server running on http://${hostForLog}:${PORT}`);
+    if ((process.env.RESEND_API_KEY || '') && (process.env.RESEND_FROM_EMAIL || '')) {
+        console.log('📧 Resend: Configured');
+    }
     if (emailConfig.auth.user && emailConfig.auth.pass) {
         console.log(`📧 SMTP: Configured`);
     }
-    if (!emailConfig.auth.user) {
-        console.log(`📧 Email: Not configured - Set SMTP_USER and SMTP_PASS`);
+    if (!(process.env.RESEND_API_KEY || '') && !emailConfig.auth.user) {
+        console.log(`📧 Email: Not configured - Set RESEND_API_KEY and RESEND_FROM_EMAIL, or SMTP_USER and SMTP_PASS`);
     }
 });
 
